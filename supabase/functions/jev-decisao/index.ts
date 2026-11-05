@@ -18,7 +18,7 @@ const lista = (v: string | undefined, padrao: string) =>
 // jev
 const JEV_API_KEY = Deno.env.get("JEV_API_KEY") ?? "";
 const JEV_API_URL = Deno.env.get("JEV_API_URL") ?? "https://api.defapi.org/v1/chat/completions";
-const JEV_MODELOS = lista(Deno.env.get("JEV_MODELOS"), "jev-1.13");
+const JEV_MODELOS = lista(Deno.env.get("JEV_MODELOS"), "typesafe/jev-1.13");
 // Preço do jev em USD por 1M tokens, se conhecido (ex.: "0.5,1.5" = entrada,saída)
 const JEV_PRECO = lista(Deno.env.get("JEV_PRECO_POR_MILHAO"), "").map(Number);
 
@@ -132,6 +132,20 @@ async function callJevResolvendo(vendedores: Vendedor[], modelo: string) {
     if (!modeloNaoEncontrado(e)) throw e;
     const ids = await modelosDefapi();
     const alt = escolherModelo(modelo, ids);
+    // Sem lista de modelos: tenta as grafias conhecidas (defapi usa "typesafe/jev-1.13"; a TypeSafe usa "jev-1.13.0").
+    if (!alt && !ids.length) {
+      const base = modelo.replace(/^typesafe\//, "").replace(/\.0$/, "");
+      const candidatos = [`typesafe/${base}`, base, `typesafe/${base}.0`, `${base}.0`].filter((c) => c !== atual);
+      for (const c of candidatos) {
+        try {
+          const r = await callJev(vendedores, cfg(c));
+          resolvidos.set(modelo, c);
+          return { ...r, modeloSolicitado: modelo, modeloResolvido: c };
+        } catch (e2) {
+          if (!modeloNaoEncontrado(e2)) throw e2;
+        }
+      }
+    }
     if (alt && alt !== atual) {
       resolvidos.set(modelo, alt);
       const r = await callJev(vendedores, cfg(alt));
@@ -144,7 +158,7 @@ async function callJevResolvendo(vendedores: Vendedor[], modelo: string) {
       ? `Modelos jev disponíveis na sua conta: ${sugestoes.join(", ")}. Cadastre o nome certo no secret JEV_MODELOS.`
       : ids.length
         ? `Nenhum modelo com "jev" no nome foi encontrado. Alguns disponíveis: ${ids.slice(0, 15).join(", ")}.`
-        : `Não consegui listar os modelos em ${JEV_MODELS_URL}. Confira o nome exato no painel do defapi.org e cadastre no secret JEV_MODELOS.`);
+        : `Também testei typesafe/, sem prefixo e com sufixo .0, sem sucesso. Copie o nome exato e o exemplo de código da página do jev no defapi.org.`);
     err.sugestoes = sugestoes;
     throw err;
   }

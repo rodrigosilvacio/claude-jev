@@ -68,7 +68,7 @@ No painel do Supabase: Edge Functions, Secrets. Crie:
 | `CLAUDE_EFFORT` | opcional. Padrão `low` (`low`, `medium`, `high`, `xhigh`, `max`) |
 | `JEV_PRECO_POR_MILHAO` | opcional. Preço do jev em USD por 1M tokens, no formato `entrada,saida` (ex.: `0.5,1.5`) |
 | `JEV_API_URL` | opcional. Padrão `https://api.defapi.org/v1/chat/completions` (confirmar na documentação do defapi.org) |
-| `JEV_MODELOS` | opcional. Padrão `jev-1.13`. Se o defapi responder "model not found", a função consulta a lista de modelos da conta, usa o nome equivalente (ex.: com prefixo) e mostra qual usou |
+| `JEV_MODELOS` | opcional. Padrão `typesafe/jev-1.13` (nome usado na listagem do defapi). Se o defapi responder "model not found", a função consulta a lista de modelos da conta, usa o nome equivalente (ex.: com prefixo) e mostra qual usou |
 | `JEV_MODELS_URL` | opcional. Endereço da lista de modelos. Padrão: o endpoint de chat trocando `/chat/completions` por `/models` |
 | `ALLOWED_ORIGINS` | opcional. Padrão `https://rodrigosilvacio.github.io,http://localhost:3000` |
 | `LIMITE_POR_HORA` | opcional. Padrão `60` decisões por hora por origem |

@@ -8,5 +8,5 @@ window.JEV_APP_CONFIG = {
   modelos: ['typesafe/jev-1.13'],
   // Modelos Claude oferecidos (a Edge Function só aceita os da lista CLAUDE_MODELOS).
   modelosClaude: ['claude-opus-5-5'],
-  endpointDireto: 'https://api.defapi.org/v1/chat/completions',
+  endpointDireto: 'https://api.defapi.org/api/v1/decisions',
 };

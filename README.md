@@ -38,6 +38,8 @@ Navegador (GitHub Pages)  ──►  Supabase Edge Function "jev-decisao"  ─�
 | Tokens | `usage` devolvido por cada API. No Claude, os tokens de saída já incluem o raciocínio interno |
 | Custo | Tokens x preço por milhão. Claude Opus 5.5: US$ 4 entrada e US$ 20 saída. jev: aparece "n/d" até você informar o preço em `JEV_PRECO_POR_MILHAO` |
 
+**Como o jev é chamado:** o jev é um modelo de decisão, não de chat. A função envia `POST https://api.defapi.org/api/v1/decisions` com o modelo `typesafe/jev-1.13`, um `state` com as vendas de todos e uma pergunta do tipo `noul` por vendedor ("probabilidade de X ser quem mais vendeu"). As respostas são normalizadas para somar 100%, e a tela mostra também a probabilidade de cada pergunta antes da normalização.
+
 **Configuração do Claude:** saída estruturada (JSON Schema) para garantir o formato, esforço `low` (decisão simples, menos tokens) e fallback automático do servidor caso um classificador de segurança recuse o pedido. Tudo ajustável por secrets.
 
 **Modelos como escolha:** cada card tem seu seletor de modelo, alimentado pelos secrets `JEV_MODELOS` (padrão `jev-1.13`) e `CLAUDE_MODELOS` (padrão `claude-opus-5-5`). Para comparar outras versões, inclua os nomes separados por vírgula, por exemplo `claude-opus-5-5,claude-sonnet-5-5`.
@@ -67,7 +69,7 @@ No painel do Supabase: Edge Functions, Secrets. Crie:
 | `CLAUDE_MODELOS` | opcional. Padrão `claude-opus-5-5` |
 | `CLAUDE_EFFORT` | opcional. Padrão `low` (`low`, `medium`, `high`, `xhigh`, `max`) |
 | `JEV_PRECO_POR_MILHAO` | opcional. Preço do jev em USD por 1M tokens, no formato `entrada,saida` (ex.: `0.5,1.5`) |
-| `JEV_API_URL` | opcional. Padrão `https://api.defapi.org/v1/chat/completions` (confirmar na documentação do defapi.org) |
+| `JEV_API_URL` | opcional. Padrão `https://api.defapi.org/api/v1/decisions` (endpoint de decisões do jev) |
 | `JEV_MODELOS` | opcional. Padrão `typesafe/jev-1.13` (nome usado na listagem do defapi). Se o defapi responder "model not found", a função consulta a lista de modelos da conta, usa o nome equivalente (ex.: com prefixo) e mostra qual usou |
 | `JEV_MODELS_URL` | opcional. Endereço da lista de modelos. Padrão: o endpoint de chat trocando `/chat/completions` por `/models` |
 | `ALLOWED_ORIGINS` | opcional. Padrão `https://rodrigosilvacio.github.io,http://localhost:3000` |
@@ -132,6 +134,7 @@ Critério de aceite sugerido para o piloto: concordância no vencedor acima de 9
 
 ## Pendências
 
-- [ ] Confirmar na documentação do defapi.org o endpoint exato e o formato da requisição do jev. O projeto assume o padrão chat completions compatível com OpenAI, com `Authorization: Bearer`. Se for diferente, ajuste `public/js/jev.js` e rode `npm run sync:supabase`.
+- [x] Endpoint e formato de requisição do jev confirmados pelo exemplo do defapi.org: `POST /api/v1/decisions` com `state` e `questions` (uma pergunta `noul` por vendedor).
+- [ ] Confirmar o formato da resposta do endpoint de decisões. O leitor atual procura a probabilidade de forma tolerante; com a primeira resposta real, fixar os campos em `public/js/jev.js`.
 - [ ] Rodar o roteiro de testes com as chaves reais nos dois modelos e registrar os resultados (botão "Exportar JSON").
 - [ ] Confirmar o preço do jev e preencher `JEV_PRECO_POR_MILHAO` para o comparativo de custo ficar completo.

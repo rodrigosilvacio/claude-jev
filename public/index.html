@@ -160,7 +160,7 @@
             <option value="direto">Direto do navegador (teste, usa sua chave)</option>
           </select>
         </label>
-        <label class="direto">Endpoint<input id="cfgUrl" placeholder="https://api.defapi.org/v1/chat/completions" /></label>
+        <label class="direto">Endpoint<input id="cfgUrl" placeholder="https://api.defapi.org/api/v1/decisions" /></label>
         <label class="direto">Chave da API do jev<input id="cfgKey" type="password" placeholder="sk-..." autocomplete="off" /></label>
       </div>
       <label class="chk direto"><input type="checkbox" id="cfgLembrar" /> Lembrar a chave neste navegador (não use em computador compartilhado)</label>
@@ -247,7 +247,7 @@
     const inicio = performance.now();
     if (provedor === 'jev' && c.modo === 'direto') {
       const r = await Jev.callJev(vendedores, { url: c.url, apiKey: c.apiKey, model: modelo, timeoutMs: 30000 });
-      r.custoUSD = JevCore.custoUSD(r.modelo, r.uso);
+      r.custoUSD = r.custoInformadoUSD ?? JevCore.custoUSD(r.modelo, r.uso);
       r.totalMs = performance.now() - inicio;
       return r;
     }
@@ -300,7 +300,7 @@
     out.append(el('div', { class: 'metrics' },
       metric('Tempo de decisão', fmtSeg(r.latenciaMs), 'ida e volta: ' + fmtSeg(r.totalMs)),
       metric('Tokens', uso ? fmtInt(uso.total) : 'n/d', uso ? fmtInt(uso.entrada) + ' entrada · ' + fmtInt(uso.saida) + ' saída' : 'API não informou'),
-      metric('Custo', fmtUSD(r.custoUSD), r.custoUSD == null ? 'preço não configurado' : r.modelo)));
+      metric('Custo', fmtUSD(r.custoUSD), r.custoUSD == null ? 'preço não configurado' : r.custoInformadoUSD != null ? 'informado pela API' : r.modelo)));
     out.append(el('div', { class: 'winner' },
       el('span', { class: 'lbl' }, 'Decisão: quem vendeu mais'),
       el('span', { class: 'name' }, r.vencedor),
@@ -310,6 +310,11 @@
     if (r.justificativa) out.append(el('p', { class: 'just' }, '“' + r.justificativa + '”'));
     if (r.modeloResolvido) out.append(el('p', { class: 'hint' }, 'O defapi não reconheceu "' + r.modeloSolicitado + '" e a função usou "' + r.modeloResolvido + '". Para evitar a tentativa extra, cadastre esse nome no secret JEV_MODELOS.'));
     out.append(el('details', {}, el('summary', {}, 'Resposta bruta'), el('pre', {}, JSON.stringify(r.bruto, null, 2))));
+    if (r.requisicao) out.append(el('details', {}, el('summary', {}, 'Requisição enviada'), el('pre', {}, JSON.stringify(r.requisicao, null, 2))));
+    if (r.probabilidadesIndependentes) {
+      const ind = Object.entries(r.probabilidadesIndependentes).map(([n, p]) => n + ': ' + (p == null ? 'n/d' : fmtPct(p))).join(' · ');
+      out.append(el('p', { class: 'hint' }, 'Probabilidade de cada pergunta antes da normalização: ' + ind));
+    }
   }
 
   function renderRef(b) {

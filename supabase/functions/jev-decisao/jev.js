@@ -5,14 +5,20 @@
 'use strict';
 
 /**
- * Adaptador do modelo jev (defapi.org).
+ * Adaptador do modelo jev (defapi.org) e lógica de decisão compartilhada.
  *
- * Toda a dependência do formato da API está concentrada aqui:
- *  - buildPrompt: o que pedimos ao jev
- *  - callJev: a chamada HTTP (formato chat completions, compatível com OpenAI)
- *  - parseJevResponse: como lemos a resposta e normalizamos as probabilidades
+ * O jev é um modelo de DECISÃO, não de chat. Formato oficial (defapi.org):
+ *   POST https://api.defapi.org/api/v1/decisions
+ *   { "model": "typesafe/jev-1.13", "state": "<contexto>",
+ *     "questions": { "<chave>": { "type": "noul", "instructions": "...",
+ *                                 "criteria": { "true": "...", "false": "..." } } } }
  *
- * Se a documentação do defapi.org indicar outro formato, ajuste somente este arquivo.
+ * Mapeamento: o "state" descreve as vendas de todos e há uma pergunta por vendedor
+ * ("probabilidade de X ser quem mais vendeu"). As probabilidades são normalizadas para somar 1.
+ *
+ *  - buildDecisionRequest / parseDecisionResponse: formato de decisões do jev
+ *  - buildPrompt / SYSTEM_PROMPT / parseJevResponse: formato de texto (usado pelo Claude)
+ *  - callJev: escolhe o formato pelo endpoint (".../chat/completions" usa chat; o resto usa decisões)
  */
 
 const SYSTEM_PROMPT = [
@@ -35,6 +41,94 @@ function buildPrompt(vendedores) {
   return `Vendas por vendedor:\n${linhas.join('\n')}\n\nQual vendedor vendeu mais? Retorne o JSON.`;
 }
 
+const total = (v) => v.vendas.reduce((s, x) => s + x, 0);
+const chaveQuestao = (i) => `vendedor_${i + 1}`;
+
+function buildDecisionRequest(vendedores, model) {
+  const linhas = vendedores.map((v) =>
+    v.vendas.length > 1
+      ? `${v.nome}: ${v.vendas.length} sales entries [${v.vendas.join(', ')}], total ${total(v)}`
+      : `${v.nome}: total sales ${total(v)}`
+  );
+  const state = `Sales report for one period. Each seller's total is the sum of their entries.\n${linhas.join('\n')}`;
+  const questions = {};
+  vendedores.forEach((v, i) => {
+    questions[chaveQuestao(i)] = {
+      type: 'noul',
+      instructions: `Assess the probability that ${v.nome} is the seller with the highest total sales among all sellers listed.`,
+      criteria: {
+        true: `${v.nome} has the highest total sales`,
+        false: `Another seller has higher total sales than ${v.nome}`,
+      },
+    };
+  });
+  return { model, state, questions };
+}
+
+// A resposta exata do endpoint de decisões ainda não está documentada aqui,
+// então procuramos a probabilidade de cada pergunta de forma tolerante.
+const CAMPOS_PROB = ['probability', 'prob', 'p', 'p_true', 'true_probability', 'likelihood', 'confidence', 'score', 'value', 'answer', 'result', 'true'];
+const CAMPOS_TEXTO = ['reasoning', 'rationale', 'explanation', 'justification', 'summary'];
+
+function numeroDe(x) {
+  if (typeof x === 'number' && Number.isFinite(x)) return x;
+  if (typeof x === 'string' && x.trim() !== '' && Number.isFinite(Number(x.replace('%', '')))) return Number(x.replace('%', ''));
+  if (typeof x === 'boolean') return x ? 1 : 0;
+  if (x && typeof x === 'object') {
+    for (const c of CAMPOS_PROB) if (c in x) { const n = numeroDe(x[c]); if (n != null) return n; }
+  }
+  return null;
+}
+
+function acharTodos(obj, chave, prof = 0, out = []) {
+  if (!obj || typeof obj !== 'object' || prof > 6) return out;
+  if (Array.isArray(obj)) {
+    for (const it of obj) {
+      if (it && typeof it === 'object' && [it.key, it.id, it.name, it.question].includes(chave)) out.push(it);
+      acharTodos(it, chave, prof + 1, out);
+    }
+    return out;
+  }
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === chave) out.push(v);
+    acharTodos(v, chave, prof + 1, out);
+  }
+  return out;
+}
+
+function textoDe(x) {
+  if (!x || typeof x !== 'object') return '';
+  for (const c of CAMPOS_TEXTO) if (typeof x[c] === 'string') return x[c];
+  return '';
+}
+
+function parseDecisionResponse(json, vendedores) {
+  const brutas = vendedores.map((v, i) => {
+    let n = null;
+    for (const item of acharTodos(json, chaveQuestao(i))) { n = numeroDe(item); if (n != null) break; }
+    return n == null ? null : n > 1 ? n / 100 : n;
+  });
+  if (brutas.every((x) => x == null)) {
+    const err = new Error('Não encontrei as probabilidades na resposta do jev. Veja a resposta bruta.');
+    err.code = 'RESPOSTA_INVALIDA';
+    err.bruto = JSON.stringify(json).slice(0, 4000);
+    throw err;
+  }
+  const vals = brutas.map((x) => (x == null || x < 0 ? 0 : x));
+  const soma = vals.reduce((s, x) => s + x, 0);
+  const probabilidades = {};
+  vendedores.forEach((v, i) => { probabilidades[v.nome] = soma > 0 ? vals[i] / soma : 1 / vendedores.length; });
+  const nomes = vendedores.map((v) => v.nome);
+  const vencedor = nomes.reduce((a, n) => (probabilidades[n] > probabilidades[a] ? n : a), nomes[0]);
+  const iv = nomes.indexOf(vencedor);
+  const justificativa = acharTodos(json, chaveQuestao(iv)).map(textoDe).find(Boolean) || textoDe(json);
+  return {
+    probabilidades, vencedor, vencedorDeclarado: vencedor, coerente: true, somaOriginal: soma,
+    justificativa,
+    probabilidadesIndependentes: Object.fromEntries(nomes.map((n, i) => [n, brutas[i]])),
+  };
+}
+
 async function callJev(vendedores, cfg) {
   if (!cfg.url) {
     const err = new Error('Informe o endpoint do jev em Configurações.');
@@ -47,14 +141,17 @@ async function callJev(vendedores, cfg) {
     throw err;
   }
 
-  const body = {
-    model: cfg.model,
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: buildPrompt(vendedores) },
-    ],
-    temperature: 0,
-  };
+  const formatoChat = /\/chat\/completions\/?$/.test(cfg.url);
+  const body = formatoChat
+    ? {
+        model: cfg.model,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: buildPrompt(vendedores) },
+        ],
+        temperature: 0,
+      }
+    : buildDecisionRequest(vendedores, cfg.model);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs || 30000);
@@ -64,7 +161,7 @@ async function callJev(vendedores, cfg) {
     res = await fetch(cfg.url, {
       method: 'POST',
       headers: Object.assign(
-        { 'Content-Type': 'application/json' },
+        { 'Content-Type': 'application/json', Accept: 'application/json' },
         cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}
       ),
       body: JSON.stringify(body),
@@ -103,8 +200,10 @@ async function callJev(vendedores, cfg) {
     throw err;
   }
 
-  const parsed = parseJevResponse(json, vendedores.map((v) => v.nome));
-  return { ...parsed, modelo: json.model || cfg.model, latenciaMs, uso: extractUsage(json), bruto: json };
+  const parsed = formatoChat
+    ? parseJevResponse(json, vendedores.map((v) => v.nome))
+    : parseDecisionResponse(json, vendedores);
+  return { ...parsed, modelo: json.model || cfg.model, latenciaMs, uso: extractUsage(json), custoInformadoUSD: extractCost(json), bruto: json, requisicao: formatoChat ? undefined : body };
 }
 
 // Tokens no formato OpenAI (prompt/completion) ou Anthropic (input/output).
@@ -116,6 +215,13 @@ function extractUsage(json) {
   const e = Number.isFinite(entrada) ? entrada : 0;
   const s = Number.isFinite(saida) ? saida : 0;
   return { entrada: e, saida: s, total: e + s };
+}
+
+// Custo informado pela própria API, se houver (ex.: usage.cost, cost, price, credits_used).
+function extractCost(json) {
+  const cands = [json?.usage?.cost, json?.usage?.total_cost, json?.cost, json?.total_cost, json?.price, json?.billing?.cost];
+  for (const c of cands) { const n = numeroDe(c); if (n != null) return n; }
+  return null;
 }
 
 function extractContent(json) {
@@ -183,5 +289,5 @@ function parseJevResponse(json, nomes) {
   };
 }
 
-return { callJev, parseJevResponse, buildPrompt, extractUsage, SYSTEM_PROMPT };
+return { callJev, parseJevResponse, parseDecisionResponse, buildDecisionRequest, buildPrompt, extractUsage, extractCost, SYSTEM_PROMPT };
 });

@@ -17,7 +17,7 @@ const lista = (v: string | undefined, padrao: string) =>
 
 // jev
 const JEV_API_KEY = Deno.env.get("JEV_API_KEY") ?? "";
-const JEV_API_URL = Deno.env.get("JEV_API_URL") ?? "https://api.defapi.org/v1/chat/completions";
+const JEV_API_URL = Deno.env.get("JEV_API_URL") ?? "https://api.defapi.org/api/v1/decisions";
 const JEV_MODELOS = lista(Deno.env.get("JEV_MODELOS"), "typesafe/jev-1.13");
 // Preço do jev em USD por 1M tokens, se conhecido (ex.: "0.5,1.5" = entrada,saída)
 const JEV_PRECO = lista(Deno.env.get("JEV_PRECO_POR_MILHAO"), "").map(Number);
@@ -85,11 +85,12 @@ type Vendedor = { nome: string; vendas: number[] };
 // ---------- descoberta de modelos do defapi ----------
 // O nome exato do modelo no defapi pode ter prefixo (ex.: "fornecedor/jev-1.13").
 // Consultamos a lista de modelos da conta (formato OpenAI: GET .../models) e guardamos por 10 min.
-const JEV_MODELS_URL = Deno.env.get("JEV_MODELS_URL") ?? JEV_API_URL.replace(/\/chat\/completions\/?$/, "/models");
+const JEV_MODELS_URL = Deno.env.get("JEV_MODELS_URL") ?? (/\/chat\/completions\/?$/.test(JEV_API_URL) ? JEV_API_URL.replace(/\/chat\/completions\/?$/, "/models") : "");
 let cacheModelos: { em: number; ids: string[] } | null = null;
 const resolvidos = new Map<string, string>();
 
 async function modelosDefapi(): Promise<string[]> {
+  if (!JEV_MODELS_URL) return [];
   if (cacheModelos && Date.now() - cacheModelos.em < 600_000) return cacheModelos.ids;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 8000);
@@ -290,7 +291,7 @@ Deno.serve(async (req) => {
     const precoJev = JEV_PRECO.length === 2 && JEV_PRECO.every(Number.isFinite)
       ? { [resultado.modelo]: { entrada: JEV_PRECO[0], saida: JEV_PRECO[1] } }
       : undefined;
-    resultado.custoUSD = custoUSD(resultado.modelo, resultado.uso, precoJev);
+    resultado.custoUSD = resultado.custoInformadoUSD ?? custoUSD(resultado.modelo, resultado.uso, precoJev);
   } catch (e) {
     // deno-lint-ignore no-explicit-any
     const err = e as any;

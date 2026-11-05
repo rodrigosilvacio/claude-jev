@@ -148,31 +148,34 @@ test('custoUSD: usa a tabela de preços do Claude e aceita preço do jev informa
   assert.ok(Math.abs(custoUSD('jev-1.13', { entrada: 1e6, saida: 0 }, { 'jev-1.13': { entrada: 0.5, saida: 1 } }) - 0.5) < 1e-12);
 });
 
-test('jev decisões: monta state e uma pergunta por vendedor no formato oficial', () => {
+test('jev decisões: monta uma pergunta choice com uma opção por vendedor', () => {
   const { buildDecisionRequest } = require('../public/js/jev.js');
   const req = buildDecisionRequest([{ nome: 'Ana', vendas: [10, 20] }, { nome: 'Bruno', vendas: [5] }], 'typesafe/jev-1.13');
   assert.strictEqual(req.model, 'typesafe/jev-1.13');
-  assert.match(req.state, /Ana: 2 sales entries \[10, 20\], total 30/);
-  assert.deepStrictEqual(Object.keys(req.questions), ['vendedor_1', 'vendedor_2']);
-  assert.strictEqual(req.questions.vendedor_2.type, 'noul');
-  assert.ok(req.questions.vendedor_2.criteria.true.includes('Bruno'));
+  assert.deepStrictEqual(req.state.sellers[0], { option: 'vendedor_1', name: 'Ana', entries: [10, 20], total: 30 });
+  const q = req.questions.quem_vendeu_mais;
+  assert.strictEqual(q.type, 'choice');
+  assert.deepStrictEqual(Object.keys(q.criteria), ['vendedor_1', 'vendedor_2']);
+  assert.match(q.criteria.vendedor_2, /Bruno/);
 });
 
-test('jev decisões: lê probabilidades em formatos variados e normaliza', () => {
-  const { parseDecisionResponse } = require('../public/js/jev.js');
-  const vs = [{ nome: 'Ana', vendas: [1] }, { nome: 'Bruno', vendas: [2] }];
-  const formatos = [
-    { answers: { vendedor_1: { probability: 0.2 }, vendedor_2: { probability: 0.8, reasoning: 'Maior total.' } } },
-    { results: [{ key: 'vendedor_1', value: 20 }, { key: 'vendedor_2', value: 80 }] },
-    { decisions: { vendedor_1: 0.1, vendedor_2: 0.4 } },
-  ];
-  for (const f of formatos) {
-    const r = parseDecisionResponse(f, vs);
-    assert.strictEqual(r.vencedor, 'Bruno');
-    assert.ok(r.probabilidades.Bruno > 0.79 && r.probabilidades.Bruno < 0.81, JSON.stringify(f));
-  }
-  assert.strictEqual(parseDecisionResponse(formatos[0], vs).justificativa, 'Maior total.');
-  assert.throws(() => parseDecisionResponse({ ok: true }, vs), /Não encontrei as probabilidades/);
+test('jev decisões: lê a resposta oficial (choice, probabilities, confidence, consumed)', () => {
+  const { parseDecisionResponse, extractUsage, extractCost } = require('../public/js/jev.js');
+  const vs = [{ nome: 'Ana', vendas: [1] }, { nome: 'Bruno', vendas: [2] }, { nome: 'Carla', vendas: [3] }];
+  const resposta = {
+    model: 'typesafe/jev-1.13',
+    answers: { quem_vendeu_mais: { type: 'choice', choice: 'vendedor_3', probabilities: { vendedor_1: 0, vendedor_2: 0.16, vendedor_3: 0.84 }, confidence: 0.75 } },
+    usage: { input_tokens: 476, output_tokens: 70, cost: 0.00002 },
+    task_id: 'ta-x', consumed: '0.000019992',
+  };
+  const r = parseDecisionResponse(resposta, vs);
+  assert.strictEqual(r.vencedor, 'Carla');
+  assert.strictEqual(r.coerente, true);
+  assert.strictEqual(r.confianca, 0.75);
+  assert.ok(Math.abs(r.probabilidades.Bruno - 0.16) < 1e-9);
+  assert.deepStrictEqual(extractUsage(resposta), { entrada: 476, saida: 70, total: 546 });
+  assert.strictEqual(extractCost(resposta), 0.000019992);
+  assert.throws(() => parseDecisionResponse({ answers: {} }, vs), /answers.quem_vendeu_mais/);
 });
 
 test('callJev: usa o endpoint de decisões com Accept, Bearer e payload oficial', async () => {
@@ -184,7 +187,7 @@ test('callJev: usa o endpoint de decisões com Accept, Bearer e payload oficial'
     req.on('end', () => {
       recebido = { url: req.url, accept: req.headers.accept, auth: req.headers.authorization, body: JSON.parse(b) };
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ answers: { vendedor_1: { probability: 0.3 }, vendedor_2: { probability: 0.9 } }, usage: { cost: 0.002 } }));
+      res.end(JSON.stringify({ model: 'typesafe/jev-1.13', answers: { quem_vendeu_mais: { type: 'choice', choice: 'vendedor_2', probabilities: { vendedor_1: 0.1, vendedor_2: 0.9 }, confidence: 0.8 } }, usage: { input_tokens: 300, output_tokens: 40, cost: 0.003 }, consumed: '0.002' }));
     });
   });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -194,7 +197,7 @@ test('callJev: usa o endpoint de decisões com Accept, Bearer e payload oficial'
     assert.strictEqual(recebido.url, '/api/v1/decisions');
     assert.strictEqual(recebido.accept, 'application/json');
     assert.strictEqual(recebido.auth, 'Bearer k');
-    assert.ok(recebido.body.state && recebido.body.questions.vendedor_2);
+    assert.strictEqual(recebido.body.questions.quem_vendeu_mais.type, 'choice');
     assert.strictEqual(r.vencedor, 'B');
     assert.strictEqual(r.custoInformadoUSD, 0.002);
   } finally {
@@ -202,12 +205,3 @@ test('callJev: usa o endpoint de decisões com Accept, Bearer e payload oficial'
   }
 });
 
-test('jev decisões: ignora a pergunta ecoada e usa a resposta numérica', () => {
-  const { parseDecisionResponse } = require('../public/js/jev.js');
-  const r = parseDecisionResponse({
-    questions: { vendedor_1: { type: 'noul', criteria: { true: 'x', false: 'y' } }, vendedor_2: { type: 'noul' } },
-    answers: { vendedor_1: { probability: 0.25 }, vendedor_2: { probability: 0.75 } },
-  }, [{ nome: 'A', vendas: [1] }, { nome: 'B', vendas: [3] }]);
-  assert.strictEqual(r.vencedor, 'B');
-  assert.ok(Math.abs(r.probabilidades.B - 0.75) < 1e-9);
-});

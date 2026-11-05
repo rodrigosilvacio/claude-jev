@@ -36,9 +36,9 @@ Navegador (GitHub Pages)  ──►  Supabase Edge Function "jev-decisao"  ─�
 | Decisão | Vencedor e probabilidades normalizadas (somam 100%) pela mesma função para os dois modelos |
 | Tempo de decisão | Tempo da chamada ao modelo, medido no servidor. A tela também mostra o tempo de ida e volta no navegador |
 | Tokens | `usage` devolvido por cada API. No Claude, os tokens de saída já incluem o raciocínio interno |
-| Custo | Tokens x preço por milhão. Claude Opus 5.5: US$ 4 entrada e US$ 20 saída. jev: aparece "n/d" até você informar o preço em `JEV_PRECO_POR_MILHAO` |
+| Custo | jev: valor cobrado informado pelo defapi (`consumed`). Claude: tokens x preço por milhão (Opus 5.5: US$ 4 entrada e US$ 20 saída) |
 
-**Como o jev é chamado:** o jev é um modelo de decisão, não de chat. A função envia `POST https://api.defapi.org/api/v1/decisions` com o modelo `typesafe/jev-1.13`, um `state` com as vendas de todos e uma pergunta do tipo `noul` por vendedor ("probabilidade de X ser quem mais vendeu"). As respostas são normalizadas para somar 100%, e a tela mostra também a probabilidade de cada pergunta antes da normalização.
+**Como o jev é chamado:** o jev é um modelo de decisão, não de chat. A função usa a Decisions API do defapi (`POST https://api.defapi.org/api/v1/decisions`) com o modelo `typesafe/jev-1.13`. O `state` traz as vendas de cada vendedor e há uma única pergunta do tipo `choice` ("quem vendeu mais?"), com uma opção por vendedor. O jev devolve a distribuição de probabilidade entre os vendedores (`probabilities`), a opção escolhida (`choice`) e a confiança (`confidence`). O custo exibido é o campo `consumed`, valor efetivamente cobrado pelo defapi; os tokens vêm de `usage`.
 
 **Configuração do Claude:** saída estruturada (JSON Schema) para garantir o formato, esforço `low` (decisão simples, menos tokens) e fallback automático do servidor caso um classificador de segurança recuse o pedido. Tudo ajustável por secrets.
 
@@ -135,6 +135,6 @@ Critério de aceite sugerido para o piloto: concordância no vencedor acima de 9
 ## Pendências
 
 - [x] Endpoint e formato de requisição do jev confirmados pelo exemplo do defapi.org: `POST /api/v1/decisions` com `state` e `questions` (uma pergunta `noul` por vendedor).
-- [ ] Confirmar o formato da resposta do endpoint de decisões. O leitor atual procura a probabilidade de forma tolerante; com a primeira resposta real, fixar os campos em `public/js/jev.js`.
+- [x] Formato da resposta confirmado pela especificação OpenAPI da Decisions API (`answers`, `usage`, `consumed`).
 - [ ] Rodar o roteiro de testes com as chaves reais nos dois modelos e registrar os resultados (botão "Exportar JSON").
-- [ ] Confirmar o preço do jev e preencher `JEV_PRECO_POR_MILHAO` para o comparativo de custo ficar completo.
+- [x] Custo do jev vem pronto na resposta (`consumed`), sem configuração.

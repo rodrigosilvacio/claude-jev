@@ -178,9 +178,9 @@
   </div>
 </div>
 
-<script src="js/config.js?v=7"></script>
-<script src="js/core.js?v=7"></script>
-<script src="js/jev.js?v=7"></script>
+<script src="js/config.js?v=8"></script>
+<script src="js/core.js?v=8"></script>
+<script src="js/jev.js?v=8"></script>
 <script>
 (function () {
   'use strict';
@@ -194,7 +194,7 @@
   const fmtNum = (n) => Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
   const fmtInt = (n) => Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
   const fmtSeg = (ms) => (ms / 1000).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' s';
-  const fmtUSD = (v) => v == null ? 'n/d' : 'US$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 6 });
+  const fmtUSD = (v) => v == null ? 'n/d' : 'US$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 8 });
 
   function el(tag, attrs, ...kids) {
     const e = document.createElement(tag);
@@ -300,7 +300,7 @@
     out.append(el('div', { class: 'metrics' },
       metric('Tempo de decisão', fmtSeg(r.latenciaMs), 'ida e volta: ' + fmtSeg(r.totalMs)),
       metric('Tokens', uso ? fmtInt(uso.total) : 'n/d', uso ? fmtInt(uso.entrada) + ' entrada · ' + fmtInt(uso.saida) + ' saída' : 'API não informou'),
-      metric('Custo', fmtUSD(r.custoUSD), r.custoUSD == null ? 'preço não configurado' : r.custoInformadoUSD != null ? 'informado pela API' : r.modelo)));
+      metric('Custo', fmtUSD(r.custoUSD), r.custoUSD == null ? 'preço não configurado' : r.custoInformadoUSD != null ? 'valor cobrado pelo defapi' : r.modelo)));
     out.append(el('div', { class: 'winner' },
       el('span', { class: 'lbl' }, 'Decisão: quem vendeu mais'),
       el('span', { class: 'name' }, r.vencedor),
@@ -308,13 +308,10 @@
     out.append(barras(r.probabilidades));
     if (!r.coerente) out.append(el('p', { class: 'tag warn' }, 'Declarou "' + r.vencedorDeclarado + '" como vencedor, mas a maior probabilidade é de outro vendedor.'));
     if (r.justificativa) out.append(el('p', { class: 'just' }, '“' + r.justificativa + '”'));
+    if (r.confianca != null) out.append(el('p', { class: 'hint' }, 'Confiança do jev nesta decisão: ' + fmtPct(r.confianca) + '.'));
     if (r.modeloResolvido) out.append(el('p', { class: 'hint' }, 'O defapi não reconheceu "' + r.modeloSolicitado + '" e a função usou "' + r.modeloResolvido + '". Para evitar a tentativa extra, cadastre esse nome no secret JEV_MODELOS.'));
     out.append(el('details', {}, el('summary', {}, 'Resposta bruta'), el('pre', {}, JSON.stringify(r.bruto, null, 2))));
     if (r.requisicao) out.append(el('details', {}, el('summary', {}, 'Requisição enviada'), el('pre', {}, JSON.stringify(r.requisicao, null, 2))));
-    if (r.probabilidadesIndependentes) {
-      const ind = Object.entries(r.probabilidadesIndependentes).map(([n, p]) => n + ': ' + (p == null ? 'n/d' : fmtPct(p))).join(' · ');
-      out.append(el('p', { class: 'hint' }, 'Probabilidade de cada pergunta antes da normalização: ' + ind));
-    }
   }
 
   function renderRef(b) {
@@ -342,6 +339,7 @@
       ['Probabilidade do vencedor', (r) => fmtPct(r.probabilidades[r.vencedor]), fmtPct(ref.probabilidades[ref.vencedor])],
       ['Concorda com a referência', (r) => (r.vencedor === ref.vencedor ? 'sim' : 'não'), '—'],
       ['Erro médio de probabilidade', (r) => fmtPct(erroMedio(r, ref)), '—'],
+      ['Confiança declarada', (r) => (r.confianca != null ? fmtPct(r.confianca) : 'n/d'), '—'],
       ['Tempo de decisão', (r) => fmtSeg(r.latenciaMs), 'instantâneo'],
       ['Tokens (entrada / saída)', (r) => (r.uso ? fmtInt(r.uso.entrada) + ' / ' + fmtInt(r.uso.saida) : 'n/d'), '0'],
       ['Custo', (r) => fmtUSD(r.custoUSD), 'US$ 0'],

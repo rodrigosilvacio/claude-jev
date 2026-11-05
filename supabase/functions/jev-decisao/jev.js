@@ -7,18 +7,22 @@
 /**
  * Adaptador do modelo jev (defapi.org) e lógica de decisão compartilhada.
  *
- * O jev é um modelo de DECISÃO, não de chat. Formato oficial (defapi.org):
- *   POST https://api.defapi.org/api/v1/decisions
- *   { "model": "typesafe/jev-1.13", "state": "<contexto>",
- *     "questions": { "<chave>": { "type": "noul", "instructions": "...",
- *                                 "criteria": { "true": "...", "false": "..." } } } }
+ * O jev é um modelo de DECISÃO, não de chat. Contrato oficial (Decisions API do defapi.org):
+ *   POST https://api.defapi.org/api/v1/decisions   (Authorization: Bearer <chave>)
+ *   { "model": "typesafe/jev-1.13", "state": <texto ou objeto>,
+ *     "questions": { "<chave>": { "type": "choice", "instructions": "...",
+ *                                 "criteria": { "<opção>": "<descrição>" } } } }
+ *   Resposta: { "answers": { "<chave>": { "type": "choice", "choice": "<opção>",
+ *               "probabilities": { "<opção>": 0.84 }, "confidence": 0.75 } },
+ *               "usage": { "input_tokens", "output_tokens", "cost" }, "consumed": "0.0000199" }
  *
- * Mapeamento: o "state" descreve as vendas de todos e há uma pergunta por vendedor
- * ("probabilidade de X ser quem mais vendeu"). As probabilidades são normalizadas para somar 1.
+ * Mapeamento: o "state" traz as vendas de cada vendedor e há UMA pergunta do tipo "choice"
+ * ("quem vendeu mais?") com uma opção por vendedor. O jev devolve a distribuição de
+ * probabilidade entre os vendedores e a confiança. "consumed" é o valor efetivamente cobrado.
  *
- *  - buildDecisionRequest / parseDecisionResponse: formato de decisões do jev
+ *  - buildDecisionRequest / parseDecisionResponse: Decisions API do jev
  *  - buildPrompt / SYSTEM_PROMPT / parseJevResponse: formato de texto (usado pelo Claude)
- *  - callJev: escolhe o formato pelo endpoint (".../chat/completions" usa chat; o resto usa decisões)
+ *  - callJev: usa a Decisions API (ou chat, se o endpoint terminar em /chat/completions)
  */
 
 const SYSTEM_PROMPT = [
@@ -42,90 +46,56 @@ function buildPrompt(vendedores) {
 }
 
 const total = (v) => v.vendas.reduce((s, x) => s + x, 0);
-const chaveQuestao = (i) => `vendedor_${i + 1}`;
+const CHAVE_PERGUNTA = 'quem_vendeu_mais';
+const opcao = (i) => `vendedor_${i + 1}`;
 
 function buildDecisionRequest(vendedores, model) {
-  const linhas = vendedores.map((v) =>
-    v.vendas.length > 1
-      ? `${v.nome}: ${v.vendas.length} sales entries [${v.vendas.join(', ')}], total ${total(v)}`
-      : `${v.nome}: total sales ${total(v)}`
-  );
-  const state = `Sales report for one period. Each seller's total is the sum of their entries.\n${linhas.join('\n')}`;
-  const questions = {};
-  vendedores.forEach((v, i) => {
-    questions[chaveQuestao(i)] = {
-      type: 'noul',
-      instructions: `Assess the probability that ${v.nome} is the seller with the highest total sales among all sellers listed.`,
-      criteria: {
-        true: `${v.nome} has the highest total sales`,
-        false: `Another seller has higher total sales than ${v.nome}`,
+  const state = {
+    report: 'Sales per seller for one period. A seller\'s total is the sum of their entries.',
+    sellers: vendedores.map((v, i) => ({ option: opcao(i), name: v.nome, entries: v.vendas, total: total(v) })),
+  };
+  const criteria = {};
+  vendedores.forEach((v, i) => { criteria[opcao(i)] = `${v.nome} is the seller with the highest total sales`; });
+  return {
+    model,
+    state,
+    questions: {
+      [CHAVE_PERGUNTA]: {
+        type: 'choice',
+        instructions: 'Which seller had the highest total sales in this period?',
+        criteria,
       },
-    };
-  });
-  return { model, state, questions };
-}
-
-// A resposta exata do endpoint de decisões ainda não está documentada aqui,
-// então procuramos a probabilidade de cada pergunta de forma tolerante.
-const CAMPOS_PROB = ['probability', 'prob', 'p', 'p_true', 'true_probability', 'likelihood', 'confidence', 'score', 'value', 'answer', 'result', 'true'];
-const CAMPOS_TEXTO = ['reasoning', 'rationale', 'explanation', 'justification', 'summary'];
-
-function numeroDe(x) {
-  if (typeof x === 'number' && Number.isFinite(x)) return x;
-  if (typeof x === 'string' && x.trim() !== '' && Number.isFinite(Number(x.replace('%', '')))) return Number(x.replace('%', ''));
-  if (typeof x === 'boolean') return x ? 1 : 0;
-  if (x && typeof x === 'object') {
-    for (const c of CAMPOS_PROB) if (c in x) { const n = numeroDe(x[c]); if (n != null) return n; }
-  }
-  return null;
-}
-
-function acharTodos(obj, chave, prof = 0, out = []) {
-  if (!obj || typeof obj !== 'object' || prof > 6) return out;
-  if (Array.isArray(obj)) {
-    for (const it of obj) {
-      if (it && typeof it === 'object' && [it.key, it.id, it.name, it.question].includes(chave)) out.push(it);
-      acharTodos(it, chave, prof + 1, out);
-    }
-    return out;
-  }
-  for (const [k, v] of Object.entries(obj)) {
-    if (k === chave) out.push(v);
-    acharTodos(v, chave, prof + 1, out);
-  }
-  return out;
-}
-
-function textoDe(x) {
-  if (!x || typeof x !== 'object') return '';
-  for (const c of CAMPOS_TEXTO) if (typeof x[c] === 'string') return x[c];
-  return '';
+    },
+  };
 }
 
 function parseDecisionResponse(json, vendedores) {
-  const brutas = vendedores.map((v, i) => {
-    let n = null;
-    for (const item of acharTodos(json, chaveQuestao(i))) { n = numeroDe(item); if (n != null) break; }
-    return n == null ? null : n > 1 ? n / 100 : n;
-  });
-  if (brutas.every((x) => x == null)) {
-    const err = new Error('Não encontrei as probabilidades na resposta do jev. Veja a resposta bruta.');
+  const resp = json && json.answers && json.answers[CHAVE_PERGUNTA];
+  if (!resp || (typeof resp.probabilities !== 'object' && typeof resp.choice !== 'string')) {
+    const err = new Error('A resposta do jev não trouxe answers.' + CHAVE_PERGUNTA + '. Veja a resposta bruta.');
     err.code = 'RESPOSTA_INVALIDA';
     err.bruto = JSON.stringify(json).slice(0, 4000);
     throw err;
   }
-  const vals = brutas.map((x) => (x == null || x < 0 ? 0 : x));
-  const soma = vals.reduce((s, x) => s + x, 0);
-  const probabilidades = {};
-  vendedores.forEach((v, i) => { probabilidades[v.nome] = soma > 0 ? vals[i] / soma : 1 / vendedores.length; });
   const nomes = vendedores.map((v) => v.nome);
-  const vencedor = nomes.reduce((a, n) => (probabilidades[n] > probabilidades[a] ? n : a), nomes[0]);
-  const iv = nomes.indexOf(vencedor);
-  const justificativa = acharTodos(json, chaveQuestao(iv)).map(textoDe).find(Boolean) || textoDe(json);
+  const brutas = nomes.map((_, i) => {
+    const p = resp.probabilities ? Number(resp.probabilities[opcao(i)]) : resp.choice === opcao(i) ? 1 : 0;
+    return Number.isFinite(p) && p >= 0 ? p : 0;
+  });
+  const soma = brutas.reduce((s, x) => s + x, 0);
+  const probabilidades = {};
+  nomes.forEach((n, i) => { probabilidades[n] = soma > 0 ? brutas[i] / soma : 1 / nomes.length; });
+  const topo = nomes.reduce((a, n) => (probabilidades[n] > probabilidades[a] ? n : a), nomes[0]);
+  const idx = typeof resp.choice === 'string' ? Number(resp.choice.replace(/^vendedor_/, '')) - 1 : -1;
+  const escolhido = nomes[idx] ?? null;
   return {
-    probabilidades, vencedor, vencedorDeclarado: vencedor, coerente: true, somaOriginal: soma,
-    justificativa,
-    probabilidadesIndependentes: Object.fromEntries(nomes.map((n, i) => [n, brutas[i]])),
+    probabilidades,
+    vencedor: escolhido ?? topo,
+    vencedorDeclarado: escolhido,
+    coerente: !escolhido || escolhido === topo,
+    somaOriginal: soma,
+    confianca: typeof resp.confidence === 'number' ? resp.confidence : null,
+    justificativa: '',
   };
 }
 
@@ -217,10 +187,12 @@ function extractUsage(json) {
   return { entrada: e, saida: s, total: e + s };
 }
 
-// Custo informado pela própria API, se houver (ex.: usage.cost, cost, price, credits_used).
+// "consumed" é o valor efetivamente cobrado (após descontos); "usage.cost" é o custo do provedor.
 function extractCost(json) {
-  const cands = [json?.usage?.cost, json?.usage?.total_cost, json?.cost, json?.total_cost, json?.price, json?.billing?.cost];
-  for (const c of cands) { const n = numeroDe(c); if (n != null) return n; }
+  for (const c of [json?.consumed, json?.usage?.cost]) {
+    const n = typeof c === 'string' ? Number(c) : c;
+    if (typeof n === 'number' && Number.isFinite(n)) return n;
+  }
   return null;
 }
 

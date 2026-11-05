@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Decisão de Vendas com jev</title>
+<style>
+  :root {
+    --bg: #0b1020; --panel: #121933; --panel-2: #18213f; --line: #26305a;
+    --text: #e8ecf8; --muted: #93a0c4; --accent: #6ea8fe; --accent-2: #8b7bff;
+    --ok: #3ecf8e; --warn: #ffb547; --err: #ff6b6b; --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 16px 64px; }
+  header h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--muted); }
+  .status { margin-top: 12px; display: inline-flex; gap: 8px; align-items: center;
+    font-size: 13px; color: var(--muted); background: var(--panel); border: 1px solid var(--line);
+    padding: 6px 12px; border-radius: 999px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+  .dot.ok { background: var(--ok); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 24px; }
+  @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+  .card h2 { margin: 0 0 4px; font-size: 16px; }
+  .card .sub { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+  .row { display: grid; grid-template-columns: 1fr 1.4fr 32px; gap: 8px; margin-bottom: 10px; }
+  input { width: 100%; background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; padding: 10px 12px; font: inherit; }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .icon-btn { background: transparent; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 10px; cursor: pointer; font-size: 16px; }
+  .icon-btn:hover { color: var(--err); border-color: var(--err); }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  button.primary, button.ghost { border-radius: 10px; padding: 11px 18px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border: 0; color: #0b1020; }
+  button.primary:disabled { opacity: .6; cursor: wait; }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .winner { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .winner .name { font-size: 24px; font-weight: 700; }
+  .winner .pct { color: var(--accent); font-weight: 700; font-size: 18px; }
+  .bar { margin: 10px 0; }
+  .bar .lbl { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+  .bar .lbl span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .track { height: 10px; background: var(--panel-2); border-radius: 999px; overflow: hidden; }
+  .fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .5s ease; }
+  .fill.base { background: #5b6b99; }
+  .tag { display: inline-block; font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .tag.ok { color: var(--ok); border-color: var(--ok); }
+  .tag.warn { color: var(--warn); border-color: var(--warn); }
+  .err { color: var(--err); background: rgba(255,107,107,.08); border: 1px solid rgba(255,107,107,.35);
+    border-radius: 10px; padding: 12px; font-size: 14px; }
+  .just { color: var(--muted); font-size: 14px; margin-top: 12px; font-style: italic; }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  pre { background: #070b17; border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+    overflow: auto; max-height: 280px; font-size: 12px; color: #c9d3f0; }
+  .empty { color: var(--muted); font-size: 14px; }
+  .full { grid-column: 1 / -1; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  td.num { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Decisão de Vendas com jev</h1>
+    <p>Informe as vendas de cada vendedor. O jev estima a probabilidade de cada um ter vendido mais, e comparamos com um modelo estatístico de referência.</p>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusTxt">Verificando conexão com o jev…</span></div>
+  </header>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Vendedores</h2>
+      <p class="sub">Use um total (ex.: 15000) ou vários lançamentos separados por ponto e vírgula (ex.: 1200; 980; 1430).</p>
+      <form id="form" autocomplete="off">
+        <div id="rows"></div>
+        <div class="actions">
+          <button type="button" class="ghost" id="add">+ Adicionar vendedor</button>
+          <button type="button" class="ghost" id="exemplo">Carregar exemplo</button>
+          <button type="submit" class="primary" id="go">Decidir com jev</button>
+        </div>
+        <p class="hint">Valores aceitam vírgula decimal (1.234,56) ou ponto (1234.56).</p>
+      </form>
+    </section>
+
+    <section class="card" id="jevCard">
+      <h2>Decisão do jev</h2>
+      <p class="sub" id="jevSub">Modelo de decisão via defapi.org</p>
+      <div id="jevOut" class="empty">Preencha os vendedores e clique em “Decidir com jev”.</div>
+    </section>
+
+    <section class="card">
+      <h2>Modelo de referência</h2>
+      <p class="sub">Simulação de Monte Carlo sobre os totais. Serve como gabarito para avaliar o jev.</p>
+      <div id="baseOut" class="empty">Aguardando dados.</div>
+    </section>
+
+    <section class="card">
+      <h2>Avaliação do teste</h2>
+      <p class="sub">Concordância entre jev e referência nesta sessão.</p>
+      <div id="evalOut" class="empty">Nenhum teste rodado ainda.</div>
+    </section>
+
+    <section class="card full">
+      <h2>Histórico de testes</h2>
+      <p class="sub">Fica apenas neste navegador. O servidor também grava em logs/decisoes.jsonl.</p>
+      <div id="histOut" class="empty">Sem histórico.</div>
+    </section>
+  </div>
+</div>
+
+<script>
+(function () {
+  const $ = (s) => document.querySelector(s);
+  const rows = $('#rows');
+  const fmtPct = (p) => (p * 100).toFixed(1).replace('.', ',') + '%';
+  const fmtNum = (n) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+  let historico = [];
+  try { historico = JSON.parse(localStorage.getItem('jev-historico') || '[]'); } catch (_) {}
+
+  function el(tag, attrs, ...kids) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k === 'class') e.className = v; else if (k === 'style') e.style.cssText = v; else e.setAttribute(k, v);
+    }
+    for (const k of kids) if (k != null) e.append(k);
+    return e;
+  }
+
+  function addRow(nome = '', valor = '') {
+    const n = rows.children.length + 1;
+    const nomeIn = el('input', { placeholder: 'Vendedor ' + n, 'aria-label': 'Nome do vendedor' });
+    nomeIn.value = nome;
+    const valIn = el('input', { placeholder: 'Quanto vendeu', inputmode: 'decimal', 'aria-label': 'Vendas' });
+    valIn.value = valor;
+    const rm = el('button', { type: 'button', class: 'icon-btn', title: 'Remover' }, '×');
+    const row = el('div', { class: 'row' }, nomeIn, valIn, rm);
+    rm.onclick = () => { if (rows.children.length > 2) row.remove(); };
+    rows.append(row);
+  }
+
+  function parseValor(txt) {
+    let t = String(txt).trim().replace(/[R$\s]/g, '');
+    if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+    else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, ''); // 12.500 = doze mil e quinhentos
+    return Number(t);
+  }
+
+  function coletar() {
+    return [...rows.children].map((r, i) => {
+      const [nomeIn, valIn] = r.querySelectorAll('input');
+      const partes = valIn.value.split(';').map((s) => s.trim()).filter(Boolean);
+      return { nome: nomeIn.value.trim() || 'Vendedor ' + (i + 1), vendas: partes.map(parseValor) };
+    });
+  }
+
+  function barras(probs, cls) {
+    const frag = document.createDocumentFragment();
+    Object.entries(probs).sort((a, b) => b[1] - a[1]).forEach(([nome, p]) => {
+      const fill = el('div', { class: 'fill ' + (cls || ''), style: 'width:0' });
+      frag.append(el('div', { class: 'bar' },
+        el('div', { class: 'lbl' }, el('span', {}, nome), el('span', {}, fmtPct(p))),
+        el('div', { class: 'track' }, fill)));
+      requestAnimationFrame(() => (fill.style.width = (p * 100).toFixed(2) + '%'));
+    });
+    return frag;
+  }
+
+  function renderJev(data) {
+    const out = $('#jevOut'); out.className = ''; out.replaceChildren();
+    if (data.jevErro) {
+      out.append(el('div', { class: 'err' }, el('strong', {}, 'O jev não respondeu. '), data.jevErro.mensagem));
+      if (data.jevErro.bruto) out.append(el('details', {}, el('summary', {}, 'Resposta bruta'), el('pre', {}, data.jevErro.bruto)));
+      return;
+    }
+    const j = data.jev;
+    out.append(el('div', { class: 'winner' },
+      el('span', { class: 'name' }, j.vencedor),
+      el('span', { class: 'pct' }, fmtPct(j.probabilidades[j.vencedor])),
+      el('span', { class: 'tag' }, j.latenciaMs + ' ms')));
+    out.append(barras(j.probabilidades));
+    if (!j.coerente) out.append(el('p', { class: 'tag warn' }, 'Atenção: o jev declarou "' + j.vencedorDeclarado + '" como vencedor, mas a maior probabilidade é de outro vendedor.'));
+    if (Math.abs(j.somaOriginal - 1) > 0.02 && Math.abs(j.somaOriginal - 100) > 2)
+      out.append(el('p', { class: 'hint' }, 'Probabilidades originais somavam ' + fmtNum(j.somaOriginal) + ' e foram normalizadas.'));
+    if (j.justificativa) out.append(el('p', { class: 'just' }, '“' + j.justificativa + '”'));
+    out.append(el('details', {}, el('summary', {}, 'Resposta bruta do jev'), el('pre', {}, JSON.stringify(j.bruto, null, 2))));
+  }
+
+  function renderBase(data) {
+    const b = data.baseline; const out = $('#baseOut'); out.className = ''; out.replaceChildren();
+    out.append(el('div', { class: 'winner' },
+      el('span', { class: 'name' }, b.vencedor),
+      el('span', { class: 'pct' }, fmtPct(b.probabilidades[b.vencedor]))));
+    out.append(barras(b.probabilidades, 'base'));
+    const tabela = el('table', {}, el('tr', {}, el('th', {}, 'Vendedor'), el('th', {}, 'Total')));
+    Object.entries(b.totais).forEach(([n, t]) => tabela.append(el('tr', {}, el('td', {}, n), el('td', { class: 'num' }, fmtNum(t)))));
+    out.append(el('div', { style: 'margin-top:12px' }, tabela));
+  }
+
+  function renderEval() {
+    const out = $('#evalOut'); out.replaceChildren();
+    const validos = historico.filter((h) => h.concordam !== null);
+    if (!historico.length) { out.className = 'empty'; out.textContent = 'Nenhum teste rodado ainda.'; return; }
+    out.className = '';
+    const ult = historico[0];
+    const tag = ult.concordam === null ? el('span', { class: 'tag warn' }, 'Último teste sem resposta do jev')
+      : ult.concordam ? el('span', { class: 'tag ok' }, 'Último teste: jev concorda com a referência')
+      : el('span', { class: 'tag warn' }, 'Último teste: jev diverge da referência');
+    out.append(tag);
+    const acertos = validos.filter((h) => h.concordam).length;
+    const mae = validos.length ? validos.reduce((s, h) => s + h.erroMedio, 0) / validos.length : null;
+    const t = el('table', { style: 'margin-top:14px' },
+      el('tr', {}, el('td', {}, 'Testes rodados'), el('td', { class: 'num' }, String(historico.length))),
+      el('tr', {}, el('td', {}, 'Com resposta do jev'), el('td', { class: 'num' }, String(validos.length))),
+      el('tr', {}, el('td', {}, 'Concordância no vencedor'), el('td', { class: 'num' }, validos.length ? fmtPct(acertos / validos.length) : 'n/d')),
+      el('tr', {}, el('td', {}, 'Erro médio de probabilidade'), el('td', { class: 'num' }, mae == null ? 'n/d' : fmtPct(mae))));
+    out.append(t);
+  }
+
+  function renderHist() {
+    const out = $('#histOut'); out.replaceChildren();
+    if (!historico.length) { out.className = 'empty'; out.textContent = 'Sem histórico.'; return; }
+    out.className = '';
+    const t = el('table', {}, el('tr', {}, el('th', {}, 'Quando'), el('th', {}, 'Entradas'),
+      el('th', {}, 'jev'), el('th', {}, 'Referência'), el('th', {}, 'Resultado')));
+    historico.slice(0, 20).forEach((h) => t.append(el('tr', {},
+      el('td', {}, new Date(h.em).toLocaleString('pt-BR')),
+      el('td', {}, h.entradas),
+      el('td', {}, h.jev || '—'),
+      el('td', {}, h.base),
+      el('td', {}, h.concordam === null ? 'sem jev' : h.concordam ? 'concorda' : 'diverge'))));
+    const limpar = el('button', { type: 'button', class: 'ghost', style: 'margin-top:12px' }, 'Limpar histórico');
+    limpar.onclick = () => { historico = []; salvar(); renderHist(); renderEval(); };
+    out.append(t, limpar);
+  }
+
+  function salvar() { try { localStorage.setItem('jev-historico', JSON.stringify(historico.slice(0, 200))); } catch (_) {} }
+
+  async function decidir(ev) {
+    ev.preventDefault();
+    const vendedores = coletar();
+    const ruim = vendedores.find((v) => !v.vendas.length || v.vendas.some((x) => !Number.isFinite(x) || x < 0));
+    if (ruim) { alert('Confira os valores de ' + ruim.nome + '.'); return; }
+    const go = $('#go'); go.disabled = true; go.textContent = 'Consultando jev…';
+    try {
+      const r = await fetch('/api/decidir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vendedores }) });
+      const data = await r.json();
+      if (!r.ok) { alert(data.erro || 'Erro'); return; }
+      renderJev(data); renderBase(data);
+      let erroMedio = null;
+      if (data.jev) {
+        const nomes = Object.keys(data.baseline.probabilidades);
+        erroMedio = nomes.reduce((s, n) => s + Math.abs(data.jev.probabilidades[n] - data.baseline.probabilidades[n]), 0) / nomes.length;
+      }
+      historico.unshift({
+        em: new Date().toISOString(),
+        entradas: data.vendedores.map((v) => v.nome + ': ' + fmtNum(v.vendas.reduce((a, b) => a + b, 0))).join(' | '),
+        jev: data.jev ? data.jev.vencedor + ' (' + fmtPct(data.jev.probabilidades[data.jev.vencedor]) + ')' : null,
+        base: data.baseline.vencedor + ' (' + fmtPct(data.baseline.probabilidades[data.baseline.vencedor]) + ')',
+        concordam: data.concordam, erroMedio,
+      });
+      salvar(); renderEval(); renderHist();
+    } catch (e) {
+      alert('Falha ao falar com o servidor: ' + e.message);
+    } finally {
+      go.disabled = false; go.textContent = 'Decidir com jev';
+    }
+  }
+
+  $('#add').onclick = () => addRow();
+  $('#exemplo').onclick = () => {
+    rows.replaceChildren();
+    addRow('Ana', '12500; 11800; 13900; 12100');
+    addRow('Bruno', '13200; 9800; 15100; 11400');
+    addRow('Carla', '10400; 10900; 11200; 10700');
+  };
+  $('#form').onsubmit = decidir;
+  for (let i = 0; i < 3; i++) addRow();
+  renderEval(); renderHist();
+
+  fetch('/api/status').then((r) => r.json()).then((s) => {
+    $('#jevSub').textContent = 'Modelo ' + s.modelo + ' via defapi.org';
+    if (s.jevConfigurado) { $('#dot').classList.add('ok'); $('#statusTxt').textContent = 'jev configurado (' + s.modelo + ')'; }
+    else $('#statusTxt').textContent = 'JEV_API_KEY não configurada: apenas o modelo de referência vai responder';
+  }).catch(() => { $('#statusTxt').textContent = 'Servidor indisponível'; });
+})();
+</script>
+</body>
+</html>

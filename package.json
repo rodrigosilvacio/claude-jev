@@ -1,0 +1,13 @@
+{
+  "name": "jev-decisao-vendas",
+  "version": "0.1.0",
+  "description": "Interface web para testar o modelo jev como motor de decisão: qual vendedor vendeu mais, por probabilidade.",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "license": "MIT"
+}

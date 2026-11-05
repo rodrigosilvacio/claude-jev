@@ -82,6 +82,74 @@ const SCHEMA_DECISAO = {
 
 type Vendedor = { nome: string; vendas: number[] };
 
+// ---------- descoberta de modelos do defapi ----------
+// O nome exato do modelo no defapi pode ter prefixo (ex.: "fornecedor/jev-1.13").
+// Consultamos a lista de modelos da conta (formato OpenAI: GET .../models) e guardamos por 10 min.
+const JEV_MODELS_URL = Deno.env.get("JEV_MODELS_URL") ?? JEV_API_URL.replace(/\/chat\/completions\/?$/, "/models");
+let cacheModelos: { em: number; ids: string[] } | null = null;
+const resolvidos = new Map<string, string>();
+
+async function modelosDefapi(): Promise<string[]> {
+  if (cacheModelos && Date.now() - cacheModelos.em < 600_000) return cacheModelos.ids;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const r = await fetch(JEV_MODELS_URL, { headers: { Authorization: `Bearer ${JEV_API_KEY}` }, signal: ctrl.signal });
+    if (!r.ok) return [];
+    const j = await r.json();
+    const lista = Array.isArray(j?.data) ? j.data : Array.isArray(j?.models) ? j.models : Array.isArray(j) ? j : [];
+    // deno-lint-ignore no-explicit-any
+    const ids = lista.map((m: any) => (typeof m === "string" ? m : m?.id ?? m?.name)).filter((x: unknown) => typeof x === "string");
+    cacheModelos = { em: Date.now(), ids };
+    return ids;
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+const jevLike = (ids: string[]) => ids.filter((id) => /jev/i.test(id));
+
+function escolherModelo(pedido: string, ids: string[]): string | null {
+  const p = pedido.toLowerCase();
+  return ids.find((id) => id.toLowerCase() === p)
+    ?? ids.find((id) => id.toLowerCase().endsWith("/" + p))
+    ?? ids.find((id) => id.toLowerCase().includes(p))
+    ?? null;
+}
+
+const modeloNaoEncontrado = (e: unknown) =>
+  // deno-lint-ignore no-explicit-any
+  /model not found|model_not_found|does not exist|invalid model/i.test(String((e as any)?.bruto ?? (e as any)?.message ?? ""));
+
+async function callJevResolvendo(vendedores: Vendedor[], modelo: string) {
+  const cfg = (m: string) => ({ apiKey: JEV_API_KEY, url: JEV_API_URL, model: m, timeoutMs: 30000 });
+  const atual = resolvidos.get(modelo) ?? modelo;
+  try {
+    return await callJev(vendedores, cfg(atual));
+  } catch (e) {
+    if (!modeloNaoEncontrado(e)) throw e;
+    const ids = await modelosDefapi();
+    const alt = escolherModelo(modelo, ids);
+    if (alt && alt !== atual) {
+      resolvidos.set(modelo, alt);
+      const r = await callJev(vendedores, cfg(alt));
+      return { ...r, modeloSolicitado: modelo, modeloResolvido: alt };
+    }
+    const sugestoes = jevLike(ids);
+    // deno-lint-ignore no-explicit-any
+    const err = e as any;
+    err.message = `O defapi não reconhece o modelo "${modelo}". ` + (sugestoes.length
+      ? `Modelos jev disponíveis na sua conta: ${sugestoes.join(", ")}. Cadastre o nome certo no secret JEV_MODELOS.`
+      : ids.length
+        ? `Nenhum modelo com "jev" no nome foi encontrado. Alguns disponíveis: ${ids.slice(0, 15).join(", ")}.`
+        : `Não consegui listar os modelos em ${JEV_MODELS_URL}. Confira o nome exato no painel do defapi.org e cadastre no secret JEV_MODELOS.`);
+    err.sugestoes = sugestoes;
+    throw err;
+  }
+}
+
 async function callClaude(vendedores: Vendedor[], modelo: string) {
   if (!anthropic) {
     const err = new Error("A chave da Claude API ainda não foi cadastrada nos secrets do Supabase (ANTHROPIC_API_KEY).");
@@ -145,6 +213,12 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors(origin) });
 
   if (req.method === "GET") {
+    const url = new URL(req.url);
+    if (url.searchParams.get("descobrir") === "jev") {
+      if (!JEV_API_KEY) return json({ erro: "JEV_API_KEY não configurada." }, 200, origin);
+      const ids = await modelosDefapi();
+      return json({ endpoint: JEV_MODELS_URL, total: ids.length, jev: jevLike(ids), amostra: ids.slice(0, 50) }, 200, origin);
+    }
     return json({
       provedores: {
         jev: { modelos: JEV_MODELOS, configurado: Boolean(JEV_API_KEY) },
@@ -198,7 +272,7 @@ Deno.serve(async (req) => {
   try {
     resultado = provedor === "claude"
       ? await callClaude(vendedores, modelo)
-      : await callJev(vendedores, { apiKey: JEV_API_KEY, url: JEV_API_URL, model: modelo, timeoutMs: 30000 });
+      : await callJevResolvendo(vendedores, modelo);
     const precoJev = JEV_PRECO.length === 2 && JEV_PRECO.every(Number.isFinite)
       ? { [resultado.modelo]: { entrada: JEV_PRECO[0], saida: JEV_PRECO[1] } }
       : undefined;
@@ -206,7 +280,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     // deno-lint-ignore no-explicit-any
     const err = e as any;
-    erroModelo = { codigo: err.code ?? err.status ?? "ERRO", mensagem: err.message, bruto: err.bruto };
+    erroModelo = { codigo: err.code ?? err.status ?? "ERRO", mensagem: err.message, bruto: err.bruto, sugestoes: err.sugestoes };
   }
 
   const { error: logErro } = await supabase.from("jev_decisoes").insert({

@@ -308,6 +308,7 @@
     out.append(barras(r.probabilidades));
     if (!r.coerente) out.append(el('p', { class: 'tag warn' }, 'Declarou "' + r.vencedorDeclarado + '" como vencedor, mas a maior probabilidade é de outro vendedor.'));
     if (r.justificativa) out.append(el('p', { class: 'just' }, '“' + r.justificativa + '”'));
+    if (r.modeloResolvido) out.append(el('p', { class: 'hint' }, 'O defapi não reconheceu "' + r.modeloSolicitado + '" e a função usou "' + r.modeloResolvido + '". Para evitar a tentativa extra, cadastre esse nome no secret JEV_MODELOS.'));
     out.append(el('details', {}, el('summary', {}, 'Resposta bruta'), el('pre', {}, JSON.stringify(r.bruto, null, 2))));
   }
 

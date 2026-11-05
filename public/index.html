@@ -80,6 +80,7 @@
   .modelsel { display: grid; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
   .cfg { display: grid; grid-template-columns: 1fr 2fr 1.5fr; gap: 12px; }
   @media (max-width: 860px) { .cfg { grid-template-columns: 1fr; } }
+  .cfg.so-modo { grid-template-columns: minmax(0, 420px); }
   .cfg label { font-size: 13px; color: var(--muted); display: grid; gap: 6px; }
   .chk { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); margin-top: 12px; }
   .chk input { width: auto; }
@@ -481,6 +482,7 @@
   function aplicarModo() {
     const direto = $('#cfgModo').value === 'direto';
     document.querySelectorAll('#cfgCard .direto').forEach((e) => e.classList.toggle('hidden', !direto));
+    $('#cfgCard .cfg').classList.toggle('so-modo', !direto);
   }
   function carregarCfgNaTela() {
     const c = lerCfg();

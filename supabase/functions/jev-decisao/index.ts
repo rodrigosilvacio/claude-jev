@@ -256,7 +256,9 @@ Deno.serve(async (req) => {
 
   const provedor = payload.provedor === "claude" ? "claude" : "jev";
   const permitidos = provedor === "claude" ? CLAUDE_MODELOS : JEV_MODELOS;
-  const modelo = payload.modelo || permitidos[0];
+  // Aceita o nome curto (ex.: "jev-1.13") quando a lista tem o nome completo ("typesafe/jev-1.13").
+  const pedido = payload.modelo || permitidos[0];
+  const modelo = permitidos.includes(pedido) ? pedido : permitidos.find((p) => p.endsWith("/" + pedido)) ?? pedido;
   if (!permitidos.includes(modelo)) return json({ erro: `Modelo não permitido: ${modelo}` }, 400, origin);
 
   const { vendedores, erro } = validar({ vendedores: payload.vendedores });

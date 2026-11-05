@@ -64,6 +64,16 @@
   th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
   th { color: var(--muted); font-weight: 500; }
   td.num { font-variant-numeric: tabular-nums; }
+  .cfg { display: grid; grid-template-columns: 2fr 1fr 1.5fr; gap: 12px; }
+  @media (max-width: 820px) { .cfg { grid-template-columns: 1fr; } }
+  select { width: 100%; background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; padding: 10px 12px; font: inherit; }
+  .modelo { display: grid; gap: 6px; font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+  .hidden { display: none !important; }
+  .cfg label { font-size: 13px; color: var(--muted); display: grid; gap: 6px; }
+  .chk { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); margin-top: 12px; }
+  .chk input { width: auto; }
+  .table-wrap { overflow-x: auto; }
 </style>
 </head>
 <body>
@@ -71,7 +81,7 @@
   <header>
     <h1>Decisão de Vendas com jev</h1>
     <p>Informe as vendas de cada vendedor. O jev estima a probabilidade de cada um ter vendido mais, e comparamos com um modelo estatístico de referência.</p>
-    <div class="status"><span class="dot" id="dot"></span><span id="statusTxt">Verificando conexão com o jev…</span></div>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusTxt">Carregando…</span></div>
   </header>
 
   <div class="grid">
@@ -79,6 +89,9 @@
       <h2>Vendedores</h2>
       <p class="sub">Use um total (ex.: 15000) ou vários lançamentos separados por ponto e vírgula (ex.: 1200; 980; 1430).</p>
       <form id="form" autocomplete="off">
+        <label class="modelo">Modelo de decisão
+          <select id="modelo"></select>
+        </label>
         <div id="rows"></div>
         <div class="actions">
           <button type="button" class="ghost" id="add">+ Adicionar vendedor</button>
@@ -107,20 +120,75 @@
       <div id="evalOut" class="empty">Nenhum teste rodado ainda.</div>
     </section>
 
+    <section class="card full" id="cfgCard">
+      <h2>Conexão com o jev</h2>
+      <p class="sub">Recomendado: Supabase. A chave do jev fica guardada no servidor e cada decisão é registrada para auditoria.</p>
+      <div class="cfg">
+        <label>Modo
+          <select id="cfgModo">
+            <option value="supabase">Supabase Edge Function (recomendado)</option>
+            <option value="direto">Direto do navegador (teste, usa sua chave)</option>
+          </select>
+        </label>
+        <label class="direto">Endpoint<input id="cfgUrl" placeholder="https://api.defapi.org/v1/chat/completions" /></label>
+        <label class="direto">Chave da API<input id="cfgKey" type="password" placeholder="sk-..." autocomplete="off" /></label>
+      </div>
+      <label class="chk direto"><input type="checkbox" id="cfgLembrar" /> Lembrar a chave neste navegador (não use em computador compartilhado)</label>
+      <div class="actions">
+        <button type="button" class="primary" id="cfgSalvar">Salvar</button>
+        <button type="button" class="ghost direto" id="cfgLimpar">Apagar chave</button>
+      </div>
+    </section>
+
     <section class="card full">
       <h2>Histórico de testes</h2>
-      <p class="sub">Fica apenas neste navegador. O servidor também grava em logs/decisoes.jsonl.</p>
+      <p class="sub">Fica apenas neste navegador. Exporte em JSON para registrar a avaliação do modelo.</p>
       <div id="histOut" class="empty">Sem histórico.</div>
     </section>
   </div>
 </div>
 
+<script src="js/config.js"></script>
+<script src="js/core.js"></script>
+<script src="js/jev.js"></script>
 <script>
 (function () {
   const $ = (s) => document.querySelector(s);
   const rows = $('#rows');
   const fmtPct = (p) => (p * 100).toFixed(1).replace('.', ',') + '%';
   const fmtNum = (n) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+  const APP = window.JEV_APP_CONFIG;
+  const CFG_KEY = 'jev-config';
+  function lerCfg() {
+    let c = {};
+    try { c = JSON.parse(localStorage.getItem(CFG_KEY) || '{}'); } catch (_) {}
+    let key = '';
+    try { key = sessionStorage.getItem('jev-key') || localStorage.getItem('jev-key') || ''; } catch (_) {}
+    return { modo: c.modo || 'supabase', url: c.url || APP.endpointDireto, apiKey: key, timeoutMs: 30000 };
+  }
+  function modeloEscolhido() { return $('#modelo').value || APP.modelos[0]; }
+
+  // Chama o modelo escolhido pelo modo configurado.
+  async function consultarModelo(vendedores) {
+    const c = lerCfg();
+    const model = modeloEscolhido();
+    if (c.modo === 'direto') return Jev.callJev(vendedores, { url: c.url, apiKey: c.apiKey, model, timeoutMs: c.timeoutMs });
+    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 45000);
+    let r;
+    try {
+      r = await fetch(APP.supabaseFunctionUrl, {
+        method: 'POST', signal: ctrl.signal,
+        headers: { 'Content-Type': 'application/json', apikey: APP.supabaseAnonKey, Authorization: 'Bearer ' + APP.supabaseAnonKey },
+        body: JSON.stringify({ modelo: model, vendedores }),
+      });
+    } catch (e) {
+      const err = new Error(e.name === 'AbortError' ? 'O Supabase não respondeu a tempo.' : 'Não foi possível falar com o Supabase.'); err.code = 'FALHA_REDE'; throw err;
+    } finally { clearTimeout(t); }
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { const err = new Error(data.erro || data.message || ('Supabase retornou HTTP ' + r.status)); err.code = 'HTTP_' + r.status; throw err; }
+    if (data.jevErro) { const err = new Error(data.jevErro.mensagem); err.code = data.jevErro.codigo; err.bruto = data.jevErro.bruto; throw err; }
+    return data.jev;
+  }
   let historico = [];
   try { historico = JSON.parse(localStorage.getItem('jev-historico') || '[]'); } catch (_) {}
 
@@ -145,18 +213,11 @@
     rows.append(row);
   }
 
-  function parseValor(txt) {
-    let t = String(txt).trim().replace(/[R$\s]/g, '');
-    if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
-    else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, ''); // 12.500 = doze mil e quinhentos
-    return Number(t);
-  }
-
   function coletar() {
     return [...rows.children].map((r, i) => {
       const [nomeIn, valIn] = r.querySelectorAll('input');
       const partes = valIn.value.split(';').map((s) => s.trim()).filter(Boolean);
-      return { nome: nomeIn.value.trim() || 'Vendedor ' + (i + 1), vendas: partes.map(parseValor) };
+      return { nome: nomeIn.value.trim() || 'Vendedor ' + (i + 1), vendas: partes.map(JevCore.parseValor) };
     });
   }
 
@@ -235,24 +296,32 @@
       el('td', {}, h.jev || '—'),
       el('td', {}, h.base),
       el('td', {}, h.concordam === null ? 'sem jev' : h.concordam ? 'concorda' : 'diverge'))));
-    const limpar = el('button', { type: 'button', class: 'ghost', style: 'margin-top:12px' }, 'Limpar histórico');
-    limpar.onclick = () => { historico = []; salvar(); renderHist(); renderEval(); };
-    out.append(t, limpar);
+    const limpar = el('button', { type: 'button', class: 'ghost' }, 'Limpar histórico');
+    limpar.onclick = () => { if (confirm('Apagar o histórico deste navegador?')) { historico = []; salvar(); renderHist(); renderEval(); } };
+    const exportar = el('button', { type: 'button', class: 'ghost' }, 'Exportar JSON');
+    exportar.onclick = () => {
+      const blob = new Blob([JSON.stringify(historico, null, 2)], { type: 'application/json' });
+      const a = el('a', { href: URL.createObjectURL(blob), download: 'testes-jev-' + new Date().toISOString().slice(0, 10) + '.json' });
+      document.body.append(a); a.click(); a.remove();
+    };
+    out.append(el('div', { class: 'table-wrap' }, t), el('div', { class: 'actions' }, exportar, limpar));
   }
 
   function salvar() { try { localStorage.setItem('jev-historico', JSON.stringify(historico.slice(0, 200))); } catch (_) {} }
 
   async function decidir(ev) {
     ev.preventDefault();
-    const vendedores = coletar();
-    const ruim = vendedores.find((v) => !v.vendas.length || v.vendas.some((x) => !Number.isFinite(x) || x < 0));
-    if (ruim) { alert('Confira os valores de ' + ruim.nome + '.'); return; }
+    const { vendedores, erro } = JevCore.validar({ vendedores: coletar() });
+    if (erro) { alert(erro); return; }
     const go = $('#go'); go.disabled = true; go.textContent = 'Consultando jev…';
     try {
-      const r = await fetch('/api/decidir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vendedores }) });
-      const data = await r.json();
-      if (!r.ok) { alert(data.erro || 'Erro'); return; }
-      renderJev(data); renderBase(data);
+      const baseline = JevCore.baselineProbabilities(vendedores, { cv: 0.1 });
+      renderBase({ baseline });
+      let jev = null, jevErro = null;
+      try { jev = await consultarModelo(vendedores); }
+      catch (e) { jevErro = { codigo: e.code || 'ERRO', mensagem: e.message, bruto: e.bruto }; }
+      const data = { vendedores, baseline, jev, jevErro, concordam: jev ? jev.vencedor === baseline.vencedor : null };
+      renderJev(data);
       let erroMedio = null;
       if (data.jev) {
         const nomes = Object.keys(data.baseline.probabilidades);
@@ -265,9 +334,10 @@
         base: data.baseline.vencedor + ' (' + fmtPct(data.baseline.probabilidades[data.baseline.vencedor]) + ')',
         concordam: data.concordam, erroMedio,
       });
+      historico[0].detalhe = { vendedores, baseline: baseline.probabilidades, jev: jev && jev.probabilidades, jevErro: jevErro && jevErro.mensagem, modelo: modeloEscolhido(), modo: lerCfg().modo };
       salvar(); renderEval(); renderHist();
     } catch (e) {
-      alert('Falha ao falar com o servidor: ' + e.message);
+      alert('Erro inesperado: ' + e.message);
     } finally {
       go.disabled = false; go.textContent = 'Decidir com jev';
     }
@@ -284,11 +354,56 @@
   for (let i = 0; i < 3; i++) addRow();
   renderEval(); renderHist();
 
-  fetch('/api/status').then((r) => r.json()).then((s) => {
-    $('#jevSub').textContent = 'Modelo ' + s.modelo + ' via defapi.org';
-    if (s.jevConfigurado) { $('#dot').classList.add('ok'); $('#statusTxt').textContent = 'jev configurado (' + s.modelo + ')'; }
-    else $('#statusTxt').textContent = 'JEV_API_KEY não configurada: apenas o modelo de referência vai responder';
-  }).catch(() => { $('#statusTxt').textContent = 'Servidor indisponível'; });
+  function aplicarModo() {
+    const direto = $('#cfgModo').value === 'direto';
+    document.querySelectorAll('#cfgCard .direto').forEach((e) => e.classList.toggle('hidden', !direto));
+  }
+  async function atualizarStatus() {
+    const c = lerCfg();
+    $('#jevSub').textContent = 'Modelo ' + modeloEscolhido() + (c.modo === 'direto' ? ' direto via ' + (c.url.replace(/^https?:\/\//, '').split('/')[0]) : ' via Supabase');
+    const set = (ok, txt) => { $('#dot').classList.toggle('ok', ok); $('#statusTxt').textContent = txt; };
+    if (c.modo === 'direto') {
+      const ok = Boolean(c.apiKey) || !/defapi\.org/i.test(c.url);
+      return set(ok, ok ? 'Modo direto: ' + modeloEscolhido() : 'Modo direto sem chave: informe a chave em Conexão.');
+    }
+    set(false, 'Verificando Supabase…');
+    try {
+      const r = await fetch(APP.supabaseFunctionUrl, { headers: { apikey: APP.supabaseAnonKey, Authorization: 'Bearer ' + APP.supabaseAnonKey } });
+      const d = await r.json();
+      if (Array.isArray(d.modelos) && d.modelos.length) preencherModelos(d.modelos);
+      set(Boolean(d.configurado), d.configurado ? 'Supabase conectado, ' + modeloEscolhido() + ' pronto' : 'Supabase conectado, mas a chave do jev ainda não foi cadastrada (JEV_API_KEY).');
+    } catch (_) { set(false, 'Não foi possível falar com o Supabase. Só o modelo de referência vai responder.'); }
+  }
+  function preencherModelos(lista) {
+    const sel = $('#modelo'); const atual = sel.value;
+    sel.replaceChildren(...lista.map((m, i) => el('option', { value: m }, m + (i === 0 ? ' (padrão)' : ''))));
+    if (lista.includes(atual)) sel.value = atual;
+  }
+  function carregarCfgNaTela() {
+    const c = lerCfg();
+    $('#cfgModo').value = c.modo; $('#cfgUrl').value = c.url; $('#cfgKey').value = c.apiKey;
+    try { $('#cfgLembrar').checked = Boolean(localStorage.getItem('jev-key')); } catch (_) {}
+    aplicarModo();
+  }
+  $('#cfgModo').onchange = aplicarModo;
+  $('#modelo').onchange = atualizarStatus;
+  $('#cfgSalvar').onclick = () => {
+    const url = $('#cfgUrl').value.trim() || APP.endpointDireto;
+    if (!/^https:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)/i.test(url)) { alert('O endpoint precisa começar com https://'); return; }
+    const key = $('#cfgKey').value.trim();
+    try {
+      localStorage.setItem(CFG_KEY, JSON.stringify({ modo: $('#cfgModo').value, url }));
+      localStorage.removeItem('jev-key'); sessionStorage.removeItem('jev-key');
+      if (key && $('#cfgModo').value === 'direto') ($('#cfgLembrar').checked ? localStorage : sessionStorage).setItem('jev-key', key);
+    } catch (_) { alert('Este navegador bloqueou o armazenamento local.'); }
+    atualizarStatus();
+  };
+  $('#cfgLimpar').onclick = () => {
+    try { localStorage.removeItem('jev-key'); sessionStorage.removeItem('jev-key'); } catch (_) {}
+    $('#cfgKey').value = ''; atualizarStatus();
+  };
+  preencherModelos(APP.modelos);
+  carregarCfgNaTela(); atualizarStatus();
 })();
 </script>
 </body>

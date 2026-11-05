@@ -3,9 +3,10 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
-const { baselineProbabilities } = require('../src/baseline');
-const { parseJevResponse, callJev } = require('../src/jev');
-const { validar } = require('../server');
+const fs = require('node:fs');
+const path = require('node:path');
+const { baselineProbabilities, validar, parseValor } = require('../public/js/core.js');
+const { parseJevResponse, callJev } = require('../public/js/jev.js');
 
 test('baseline: diferença grande dá quase 100% ao maior', () => {
   const r = baselineProbabilities([
@@ -109,6 +110,25 @@ test('callJev: envia formato chat completions com Bearer e modelo (servidor loca
   }
 });
 
-test('callJev: sem chave retorna NAO_CONFIGURADO', async () => {
-  await assert.rejects(() => callJev([], { apiKey: '' }), (e) => e.code === 'NAO_CONFIGURADO');
+test('callJev: defapi sem chave retorna NAO_CONFIGURADO', async () => {
+  await assert.rejects(
+    () => callJev([], { apiKey: '', url: 'https://api.defapi.org/v1/chat/completions' }),
+    (e) => e.code === 'NAO_CONFIGURADO'
+  );
+});
+
+test('parseValor: formatos brasileiros e internacionais', () => {
+  assert.strictEqual(parseValor('12.500'), 12500);
+  assert.strictEqual(parseValor('1.234,56'), 1234.56);
+  assert.strictEqual(parseValor('R$ 1.234,56'), 1234.56);
+  assert.strictEqual(parseValor('1234.56'), 1234.56);
+  assert.ok(Number.isNaN(parseValor('')));
+});
+
+test('Edge Function usa a mesma lógica do site (rode npm run sync:supabase)', () => {
+  for (const f of ['core.js', 'jev.js']) {
+    const site = fs.readFileSync(path.join(__dirname, '../public/js', f), 'utf8');
+    const fn = fs.readFileSync(path.join(__dirname, '../supabase/functions/jev-decisao', f), 'utf8');
+    assert.strictEqual(fn, site, f + ' divergente');
+  }
 });

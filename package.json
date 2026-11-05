@@ -1,13 +1,16 @@
 {
   "name": "jev-decisao-vendas",
   "version": "0.1.0",
-  "description": "Interface web para testar o modelo jev como motor de decisão: qual vendedor vendeu mais, por probabilidade.",
+  "description": "Interface web (GitHub Pages) + Supabase Edge Function para testar o modelo jev como motor de decisão de vendas.",
   "main": "server.js",
   "type": "commonjs",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "sync:supabase": "node scripts/sync-supabase.js"
   },
   "license": "MIT"
 }

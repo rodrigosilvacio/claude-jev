@@ -1,3 +1,7 @@
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.Jev = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
 'use strict';
 
 /**
@@ -32,8 +36,13 @@ function buildPrompt(vendedores) {
 }
 
 async function callJev(vendedores, cfg) {
-  if (!cfg.apiKey) {
-    const err = new Error('JEV_API_KEY não configurada. Copie .env.example para .env e preencha a chave.');
+  if (!cfg.url) {
+    const err = new Error('Informe o endpoint do jev em Configurações.');
+    err.code = 'NAO_CONFIGURADO';
+    throw err;
+  }
+  if (!cfg.apiKey && /defapi\.org/i.test(cfg.url)) {
+    const err = new Error('Informe a chave da API do defapi.org em Configurações.');
     err.code = 'NAO_CONFIGURADO';
     throw err;
   }
@@ -48,16 +57,16 @@ async function callJev(vendedores, cfg) {
   };
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs || 30000);
   const inicio = Date.now();
   let res;
   try {
     res = await fetch(cfg.url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${cfg.apiKey}`,
-      },
+      headers: Object.assign(
+        { 'Content-Type': 'application/json' },
+        cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}
+      ),
       body: JSON.stringify(body),
       signal: controller.signal,
     });
@@ -65,7 +74,9 @@ async function callJev(vendedores, cfg) {
     const err = new Error(
       e.name === 'AbortError'
         ? `jev não respondeu em ${cfg.timeoutMs} ms`
-        : `Falha de rede ao chamar o jev: ${e.cause?.code || e.message}`
+        : typeof window !== 'undefined'
+          ? 'O navegador não conseguiu chamar o jev. Causa provável: a API não permite chamadas direto do navegador (CORS) ou o endereço está errado. Solução: use um proxy (ex.: webhook n8n ou Cloudflare Worker) como endpoint.'
+          : `Falha de rede ao chamar o jev: ${(e.cause && e.cause.code) || e.message}`
     );
     err.code = 'FALHA_REDE';
     throw err;
@@ -161,4 +172,5 @@ function parseJevResponse(json, nomes) {
   };
 }
 
-module.exports = { callJev, parseJevResponse, buildPrompt, SYSTEM_PROMPT };
+return { callJev, parseJevResponse, buildPrompt, SYSTEM_PROMPT };
+});

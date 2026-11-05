@@ -1,3 +1,7 @@
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.JevCore = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
 'use strict';
 
 /**
@@ -79,4 +83,38 @@ function baselineProbabilities(vendedores, { cv = 0.1, iterations = 20000, seed 
   };
 }
 
-module.exports = { baselineProbabilities, stats };
+
+const MAX_VENDEDORES = 20;
+const MAX_LANCAMENTOS = 100;
+
+function validar(payload) {
+  const lista = payload && payload.vendedores;
+  if (!Array.isArray(lista) || lista.length < 2) return { erro: 'Informe pelo menos 2 vendedores.' };
+  if (lista.length > MAX_VENDEDORES) return { erro: `Máximo de ${MAX_VENDEDORES} vendedores.` };
+  const nomes = new Set();
+  const vendedores = [];
+  for (const [i, v] of lista.entries()) {
+    const nome = String((v && v.nome) ?? '').trim().slice(0, 60) || `Vendedor ${i + 1}`;
+    if (nomes.has(nome.toLowerCase())) return { erro: `Nome repetido: ${nome}` };
+    nomes.add(nome.toLowerCase());
+    const bruto = v && v.vendas;
+    const vendas = (Array.isArray(bruto) ? bruto : [bruto]).map(Number);
+    if (vendas.length === 0 || vendas.length > MAX_LANCAMENTOS)
+      return { erro: `${nome}: informe de 1 a ${MAX_LANCAMENTOS} valores.` };
+    if (vendas.some((x) => !Number.isFinite(x) || x < 0))
+      return { erro: `${nome}: os valores de venda devem ser números maiores ou iguais a zero.` };
+    vendedores.push({ nome, vendas });
+  }
+  return { vendedores };
+}
+
+// Aceita "12500", "12.500", "1.234,56", "1234.56", "R$ 1.234,56"
+function parseValor(txt) {
+  let t = String(txt).trim().replace(/[R$\s]/g, '');
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+  return t === '' ? NaN : Number(t);
+}
+
+return { baselineProbabilities, stats, validar, parseValor };
+});

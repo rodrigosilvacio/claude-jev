@@ -132,3 +132,18 @@ test('Edge Function usa a mesma lógica do site (rode npm run sync:supabase)', (
     assert.strictEqual(fn, site, f + ' divergente');
   }
 });
+
+test('extractUsage: aceita formato OpenAI e Anthropic', () => {
+  const { extractUsage } = require('../public/js/jev.js');
+  assert.deepStrictEqual(extractUsage({ usage: { prompt_tokens: 100, completion_tokens: 20 } }), { entrada: 100, saida: 20, total: 120 });
+  assert.deepStrictEqual(extractUsage({ usage: { input_tokens: 50, output_tokens: 5 } }), { entrada: 50, saida: 5, total: 55 });
+  assert.strictEqual(extractUsage({}), null);
+});
+
+test('custoUSD: usa a tabela de preços do Claude e aceita preço do jev informado', () => {
+  const { custoUSD } = require('../public/js/core.js');
+  // Opus 5.5: US$ 4 entrada e US$ 20 saída por 1M tokens
+  assert.ok(Math.abs(custoUSD('claude-opus-5-5', { entrada: 1000, saida: 500 }) - 0.014) < 1e-12);
+  assert.strictEqual(custoUSD('jev-1.13', { entrada: 1000, saida: 500 }), null);
+  assert.ok(Math.abs(custoUSD('jev-1.13', { entrada: 1e6, saida: 0 }, { 'jev-1.13': { entrada: 0.5, saida: 1 } }) - 0.5) < 1e-12);
+});

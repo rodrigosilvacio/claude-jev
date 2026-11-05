@@ -116,5 +116,21 @@ function parseValor(txt) {
   return t === '' ? NaN : Number(t);
 }
 
-return { baselineProbabilities, stats, validar, parseValor };
+// Preço por 1 milhão de tokens (USD). Claude: tabela pública da Anthropic.
+// jev: preencher quando o preço do defapi.org for confirmado (sem preço, o custo aparece como "não informado").
+const PRECOS = {
+  'claude-opus-5-5': { entrada: 4, saida: 20 },
+  'claude-sonnet-5-5': { entrada: 2, saida: 10 },
+  'claude-haiku-5-5': { entrada: 0.1, saida: 0.5 },
+  'claude-opus-5': { entrada: 5, saida: 25 },
+  'claude-opus-4-8': { entrada: 5, saida: 25 },
+};
+
+function custoUSD(modelo, uso, precos) {
+  const p = (precos && precos[modelo]) || PRECOS[modelo];
+  if (!p || !uso) return null;
+  return (uso.entrada * p.entrada + uso.saida * p.saida) / 1e6;
+}
+
+return { baselineProbabilities, stats, validar, parseValor, custoUSD, PRECOS };
 });

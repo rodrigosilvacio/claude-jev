@@ -104,7 +104,18 @@ async function callJev(vendedores, cfg) {
   }
 
   const parsed = parseJevResponse(json, vendedores.map((v) => v.nome));
-  return { ...parsed, modelo: cfg.model, latenciaMs, bruto: json };
+  return { ...parsed, modelo: json.model || cfg.model, latenciaMs, uso: extractUsage(json), bruto: json };
+}
+
+// Tokens no formato OpenAI (prompt/completion) ou Anthropic (input/output).
+function extractUsage(json) {
+  const u = (json && json.usage) || {};
+  const entrada = Number(u.prompt_tokens ?? u.input_tokens);
+  const saida = Number(u.completion_tokens ?? u.output_tokens);
+  if (!Number.isFinite(entrada) && !Number.isFinite(saida)) return null;
+  const e = Number.isFinite(entrada) ? entrada : 0;
+  const s = Number.isFinite(saida) ? saida : 0;
+  return { entrada: e, saida: s, total: e + s };
 }
 
 function extractContent(json) {
@@ -172,5 +183,5 @@ function parseJevResponse(json, nomes) {
   };
 }
 
-return { callJev, parseJevResponse, buildPrompt, SYSTEM_PROMPT };
+return { callJev, parseJevResponse, buildPrompt, extractUsage, SYSTEM_PROMPT };
 });
